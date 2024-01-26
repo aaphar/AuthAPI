@@ -1,5 +1,7 @@
 package com.aphar.registration.config;
 
+import com.aphar.registration.token.Token;
+import com.aphar.registration.token.TokenRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,6 +26,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final UserDetailsService userDetailsService;
 
+    private final TokenRepository tokenRepository;
+
     @Override
     protected void doFilterInternal(
             @NonNull HttpServletRequest request,
@@ -32,7 +36,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     ) throws ServletException, IOException {
 
         // check if we have jwt token
-        // token will be in header called Authorization
+        // it will be in header called Authorization
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String userEmail;
@@ -42,7 +46,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-//        jwt = authHeader.substring(7);
         jwt = authHeader.substring(7).trim();
         // check if user exist
         userEmail = jwtService.extractUsername(jwt);
@@ -50,9 +53,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // user is not authenticated yet
         if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
 
+            // fetching userDetails from datatabase
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
 
-            if (jwtService.isTokenValid(jwt, userDetails)) {
+            //check if token in db is valid
+            var isTokenValid = tokenRepository.findByToken(jwt)
+                    .map(t -> !t.isExpired() && !t.isRevoked())
+                    .orElse(false);
+
+            //check jwt token is not expired and this token is available in database
+            if (jwtService.isTokenValid(jwt, userDetails) && isTokenValid) {
 
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails,
