@@ -1,6 +1,9 @@
 package com.aphar.registration.auth;
 
 import com.aphar.registration.config.JwtService;
+import com.aphar.registration.token.Token;
+import com.aphar.registration.token.TokenRepository;
+import com.aphar.registration.token.TokenType;
 import com.aphar.registration.user.User;
 import com.aphar.registration.user.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +18,8 @@ public class AuthenticationService {
 
     private final UserRepository repository;
 
+    private final TokenRepository tokenRepository;
+
     private final PasswordEncoder passwordEncoder;
 
     private final JwtService jwtService;
@@ -24,7 +29,7 @@ public class AuthenticationService {
     public AuthenticationResponse register(RegisterRequest request) {
         // Check if the user already exists in the repository
         if (repository.existsByEmail(request.getEmail())) {
-            // For simplicity, we're returning an error response here
+
             return AuthenticationResponse.builder()
                     .token(null)
                     .error("User with this email already exists.")
@@ -39,15 +44,19 @@ public class AuthenticationService {
                 .password(passwordEncoder.encode(request.getPassword()))
                 .build();
 
-        repository.save(user);
+        var savedUser = repository.save(user);
         var jwtToken = jwtService.generateToken(user);
+
+        // revoke all tokens
+        revokeAllUserTokens(user);
+        saveUserToken(savedUser, jwtToken);
 
         return AuthenticationResponse.builder()
                 .token(jwtToken)
                 .build();
     }
 
-    public AuthenticationResponse signIn(AuthenticationRequest request) {
+    public AuthenticationResponse authenticate(AuthenticationRequest request) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
                         request.getEmail(),
@@ -60,8 +69,42 @@ public class AuthenticationService {
 
         var jwtToken = jwtService.generateToken(user);
 
+        revokeAllUserTokens(user);
+
+        saveUserToken(user, jwtToken);
+
         return AuthenticationResponse.builder()
                 .token(jwtToken)
                 .build();
     }
+
+    private void revokeAllUserTokens(User user) {
+        var validUserTokens = tokenRepository.findAllValidTokensByUser(user.getId());
+
+        if (validUserTokens.isEmpty()) {
+            return;
+        }
+
+        // update token and revoke them
+        validUserTokens.forEach(t -> {
+            t.setExpired(true);
+            t.setRevoked(true);
+        });
+
+        tokenRepository.saveAll(validUserTokens);
+    }
+
+    private void saveUserToken(User user, String jwtToken) {
+        var token = Token.builder()
+                .user(user)
+                .token(jwtToken)
+                .tokenType(TokenType.BEARER)
+                .revoked(false)
+                .expired(false)
+                .build();
+
+        // persist token to token table
+        tokenRepository.save(token);
+    }
+
 }
